@@ -223,4 +223,223 @@ if st.session_state.step == 1:
     # modo de fecha con estado persistente
     st.session_state.fecha_modo = c2.radio(
         "Fecha de evaluación", ["Hoy", "Elegir otra"],
-        horizontal=True, index=0 if st.session_state.get("fecha_modo","Hoy")=="Hoy" else 1, key="f
+        horizontal=True, index=0 if st.session_state.get("fecha_modo","Hoy")=="Hoy" else 1, key="fecha_modo_radio"
+    )
+    if st.session_state.fecha_modo == "Elegir otra":
+        # aparece SIEMPRE el selector cuando se elige esta opción
+        st.session_state.fecha = st.date_input("Selecciona fecha",
+                                               value=st.session_state.get("fecha", date.today()),
+                                               key="fecha_selector")
+    else:
+        st.session_state.fecha = date.today()
+        st.caption(f"Usando fecha de hoy: **{st.session_state.fecha.isoformat()}**")
+
+    valid = bool(st.session_state.dni.strip())
+    next_button(valid)
+
+# Paso 2 — Momento y RT
+if st.session_state.step == 2:
+    st.subheader("2) Momento y radioterapia")
+    st.session_state.momento = st.radio("Momento del tratamiento",
+                                        ["< 7 días", "> 7 días", "Semana de descanso"],
+                                        horizontal=True)
+    st.session_state.rt = st.radio("¿Recibió radioterapia?", ["No","Sí"], horizontal=True) == "Sí"
+    st.session_state.rt_en_curso = False
+    st.session_state.rt_semana = None
+    st.session_state.rt_fin = None
+    if st.session_state.rt:
+        st.session_state.rt_en_curso = st.radio("¿Radioterapia en curso?",
+                                                ["Sí","No"], horizontal=True, index=1) == "Sí"
+        if st.session_state.rt_en_curso:
+            st.session_state.rt_semana = st.selectbox("Semana de tratamiento (si está en curso)",
+                                                       ["< 7 días", "> 7 días", "> 14 días"])
+        else:
+            st.session_state.rt_fin = st.selectbox("Tiempo desde fin de radioterapia",
+                                                   ["< 7 días", "> 7 días"])
+    valid = True
+    if st.session_state.rt and st.session_state.rt_en_curso and not st.session_state.rt_semana: valid = False
+    if st.session_state.rt and (not st.session_state.rt_en_curso) and not st.session_state.rt_fin: valid = False
+    next_button(valid)
+
+# Paso 3 — ECOG & Paliativos (selects)
+if st.session_state.step == 3:
+    st.subheader("3) ECOG & Paliativos")
+    c1, c2 = st.columns(2)
+    st.session_state.ecog = to_0_4(c1.selectbox("ECOG (0–4)", op_0_4(), index=0))
+    st.session_state.paliativos = c2.radio("¿En cuidados paliativos?", ["N/A","Sí","No"], horizontal=True)
+    next_button(True)
+
+# Paso 4 — Gastrointestinales
+if st.session_state.step == 4:
+    st.subheader("4) Síntomas por sistema — Gastrointestinales")
+    st.session_state.gi_on = st.checkbox("Registrar síntomas gastrointestinales", value=False)
+    diarrea = False; diarrea_g = 0; lop = False; lop_mas7 = False
+    nauseas = False; nauseas_g = 0; nauseas_ant = False
+    vom_g = "0"; dolor_abd = "No"
+    if st.session_state.gi_on:
+        g1, g2 = st.columns(2)
+        diarrea = g1.radio("¿Diarrea?", ["No","Sí"], horizontal=True) == "Sí"
+        if diarrea:
+            diarrea_g = to_0_4(g2.selectbox("Grado de diarrea (0–4)", op_0_4(), index=0))
+            gg1, gg2 = st.columns(2)
+            lop = gg1.radio("¿Usó loperamida?", ["No","Sí"], horizontal=True) == "Sí"
+            if lop:
+                lop_mas7 = gg2.radio(">7 comprimidos en 24 h", ["No","Sí"], horizontal=True) == "Sí"
+
+        st.markdown("---")
+        h1, h2 = st.columns(2)
+        nauseas = h1.radio("¿Náuseas?", ["No","Sí"], horizontal=True) == "Sí"
+        if nauseas:
+            nauseas_g = to_0_3(h2.selectbox("Grado de náuseas (0–3)", op_0_3("3 — severo"), index=0))
+            nauseas_ant = st.radio("¿Usa antiemético?", ["No","Sí"], horizontal=True) == "Sí"
+
+        st.markdown("---")
+        k1, k2 = st.columns(2)
+        vom_g = to_A_E(k1.selectbox("Vómitos (A–E; 0 = sin síntomas)", op_A_E(True), index=0))
+        dolor_abd = k2.selectbox("Dolor abdominal", ["No","A","B","C","D"], index=0)
+
+    st.session_state.diarrea = diarrea
+    st.session_state.diarrea_g = diarrea_g
+    st.session_state.lop = lop
+    st.session_state.lop_mas7 = lop_mas7
+    st.session_state.nauseas = nauseas
+    st.session_state.nauseas_g = nauseas_g
+    st.session_state.nauseas_ant = nauseas_ant
+    st.session_state.vom_g = vom_g
+    st.session_state.dolor_abd = dolor_abd
+    next_button(True)
+
+# Paso 5 — Dermatológicos
+if st.session_state.step == 5:
+    st.subheader("5) Síntomas por sistema — Dermatológicos")
+    st.session_state.derm_on = st.checkbox("Registrar síntomas dermatológicos", value=False)
+    mucositis = False; mucositis_g = 0
+    eritema = False; eritema_g = "A"
+    acne = False; acne_g = 0
+    smp = False; smp_g = 0
+    if st.session_state.derm_on:
+        d1, d2 = st.columns(2)
+        mucositis = d1.radio("¿Mucositis?", ["No","Sí"], horizontal=True) == "Sí"
+        if mucositis:
+            mucositis_g = to_0_3(d2.selectbox("Grado mucositis (0–3; D=3)", op_0_3("3 — severo (D)"), index=0))
+        st.markdown("---")
+        d3, d4 = st.columns(2)
+        eritema = d3.radio("¿Eritema/descamación?", ["No","Sí"], horizontal=True) == "Sí"
+        if eritema:
+            eritema_g = to_A_E(d4.selectbox("Grado eritema/descamación (A–E)", op_A_E(False), index=0))
+        st.markdown("---")
+        d5, d6 = st.columns(2)
+        acne = d5.radio("¿Acné?", ["No","Sí"], horizontal=True) == "Sí"
+        if acne:
+            acne_g = to_0_3(d6.selectbox("Grado acné (0–3)", op_0_3("3 — severo"), index=0))
+        st.markdown("---")
+        d7, d8 = st.columns(2)
+        smp = d7.radio("¿Síndrome mano-pie?", ["No","Sí"], horizontal=True) == "Sí"
+        if smp:
+            smp_g = to_0_3(d8.selectbox("Grado SMP (0–3)", op_0_3("3 — severo"), index=0))
+    st.session_state.mucositis = mucositis
+    st.session_state.mucositis_g = mucositis_g
+    st.session_state.eritema = eritema
+    st.session_state.eritema_g = eritema_g
+    st.session_state.acne = acne
+    st.session_state.acne_g = acne_g
+    st.session_state.smp = smp
+    st.session_state.smp_g = smp_g
+    next_button(True)
+
+# Paso 6 — Neurológicos
+if st.session_state.step == 6:
+    st.subheader("6) Síntomas por sistema — Neurológicos")
+    st.session_state.neuro_on = st.checkbox("Registrar síntomas neurológicos", value=False)
+    neuropatia = False; neuropatia_g = 0; ototox = False
+    if st.session_state.neuro_on:
+        n1, n2 = st.columns(2)
+        neuropatia = n1.radio("¿Neuropatía?", ["No","Sí"], horizontal=True) == "Sí"
+        if neuropatia:
+            neuropatia_g = to_0_3(n2.selectbox("Grado neuropatía (0–3)", op_0_3("3 — severo"), index=0))
+        ototox = st.radio("¿Ototoxicidad (hipoacusia/tinnitus)?", ["No","Sí"], horizontal=True) == "Sí"
+    st.session_state.neuropatia = neuropatia
+    st.session_state.neuropatia_g = neuropatia_g
+    st.session_state.ototox = ototox
+    next_button(True)
+
+# Paso 7 — Cardiovasculares
+if st.session_state.step == 7:
+    st.subheader("7) Síntomas por sistema — Cardiovasculares")
+    st.session_state.cv_on = st.checkbox("Registrar síntomas cardiovasculares", value=False)
+    sang_g = "No"; hta = False; hta_g = 0
+    if st.session_state.cv_on:
+        c1, c2 = st.columns(2)
+        sang_g = to_A_E(c1.selectbox("Sangrado (A–E; 0 = sin síntomas)", op_A_E(True), index=0))
+        hta = c2.radio("¿Hipertensión?", ["No","Sí"], horizontal=True) == "Sí"
+        if hta:
+            hta_g = to_0_4(st.selectbox("Grado HTA (0–4)", op_0_4(), index=0))
+    st.session_state.sang_g = sang_g
+    st.session_state.hta = hta
+    st.session_state.hta_g = hta_g
+    next_button(True)
+
+# Paso 8 — Otros + Finalizar
+if st.session_state.step == 8:
+    st.subheader("8) Otros / cierre")
+    st.session_state.otros = st.text_area("Otros (campo libre)", height=80).strip()
+
+    data = dict(
+        dni=st.session_state.dni, fecha=st.session_state.fecha, momento=st.session_state.momento,
+        rt=st.session_state.rt, rt_en_curso=st.session_state.rt_en_curso,
+        rt_semana=st.session_state.rt_semana, rt_fin=st.session_state.rt_fin,
+        ecog=st.session_state.ecog, paliativos=st.session_state.paliativos,
+        gi_on=st.session_state.gi_on, diarrea=st.session_state.diarrea,
+        diarrea_g=st.session_state.diarrea_g, lop=st.session_state.lop,
+        lop_mas7=st.session_state.lop_mas7, nauseas=st.session_state.nauseas,
+        nauseas_g=st.session_state.nauseas_g, nauseas_ant=st.session_state.nauseas_ant,
+        vom_g=st.session_state.vom_g, dolor_abd=st.session_state.dolor_abd,
+        derm_on=st.session_state.derm_on, mucositis=st.session_state.mucositis,
+        mucositis_g=st.session_state.mucositis_g, eritema=st.session_state.eritema,
+        eritema_g=st.session_state.eritema_g, acne=st.session_state.acne,
+        acne_g=st.session_state.acne_g, smp=st.session_state.smp, smp_g=st.session_state.smp_g,
+        neuro_on=st.session_state.neuro_on, neuropatia=st.session_state.neuropatia,
+        neuropatia_g=st.session_state.neuropatia_g, ototox=st.session_state.ototox,
+        cv_on=st.session_state.cv_on, sang_g=st.session_state.sang_g,
+        hta=st.session_state.hta, hta_g=st.session_state.hta_g,
+        otros=st.session_state.otros,
+    )
+    finish_button(True, data)
+
+# Paso 9 — Resultado
+if st.session_state.step == 9 and st.session_state.result:
+    res = st.session_state.result
+    rec = res["recomendacion"]
+
+    st.success(f"Recomendación final: **{rec}**")
+    if rec == "URGENTE":
+        st.error("Derivar a **GUARDIA URGENTE**. Activar protocolo de emergencia y documentar SV.")
+    elif rec == "Guardia":
+        st.warning("Derivar a **Guardia** para evaluación inmediata.")
+    elif rec == "Interconsulta":
+        st.info("Coordinar **interconsulta** (servicio correspondiente) a corto plazo.")
+    else:
+        st.success("**Continuar** seguimiento + educación de signos de alarma.")
+
+    if res["mensajes"]:
+        st.markdown("**Observaciones/acciones**")
+        for m in res["mensajes"]:
+            st.markdown(f"- {m}")
+
+    st.markdown("**Resumen de respuestas**")
+    for k, v in res["detalles"].items():
+        st.markdown(f"- **{k}:** {v}")
+
+    # Descarga JSON
+    payload = {
+        "datos": {"dni": st.session_state.dni, "fecha": st.session_state.fecha.isoformat(),
+                  "momento": st.session_state.momento},
+        "resultado": res,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    json_bytes = io.BytesIO(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+    st.download_button("⬇️ Descargar informe (JSON)", data=json_bytes,
+                       file_name=f"triage_{st.session_state.dni or 'ND'}.json",
+                       mime="application/json")
+
+    st.button("🔄 Reiniciar", on_click=lambda: (st.session_state.clear(), st.rerun()))
