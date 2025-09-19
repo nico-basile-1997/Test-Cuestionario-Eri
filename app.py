@@ -1,8 +1,6 @@
 # Triage clínico — Wizard vertical + sidebar de referencias ocultable
-# - Fecha: selector aparece al elegir "Elegir otra" (bug fix)
-# - Referencias: TODO en la sidebar (colapsada), con ancho ajustable
-# - Selects estandarizados (número + texto) para todos los grados
-# - Lógica alineada al DOCX
+# Parcheado: progreso compatible (0–100 / 0–1), descarga robusta, clamp de step,
+# CSS sidebar tolerante, fix fecha "Elegir otra"; selects estandarizados 0–4/0–3/A–E.
 
 import io, json
 from datetime import date, datetime
@@ -20,9 +18,18 @@ st.set_page_config(
 )
 
 # Estado inicial
-if "step" not in st.session_state: st.session_state.step = 1
-if "help_width" not in st.session_state: st.session_state.help_width = "Estrecho"
-if "result" not in st.session_state: st.session_state.result = None
+if "step" not in st.session_state:
+    st.session_state.step = 1
+if "help_width" not in st.session_state:
+    st.session_state.help_width = "Estrecho"
+if "result" not in st.session_state:
+    st.session_state.result = None
+if "fecha_modo" not in st.session_state:
+    st.session_state.fecha_modo = "Hoy"
+
+# Clamp defensivo del paso (1..9)
+if not 1 <= st.session_state.step <= 9:
+    st.session_state.step = 1
 
 # Anchos para la sidebar (cuando está visible)
 SIDEBAR_WIDTHS = {"Estrecho": 320, "Amplio": 460}
@@ -32,18 +39,22 @@ SIDEBAR_WIDTHS = {"Estrecho": 320, "Amplio": 460}
 # ──────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("📘 Referencias")
+
     # Control de ancho del panel de referencias
-    ancho_opt = st.selectbox("Ancho de panel", ["Estrecho", "Amplio"],
-                             index=0 if st.session_state.help_width=="Estrecho" else 1,
-                             help="Ajusta el ancho de esta barra lateral.")
+    ancho_opt = st.selectbox(
+        "Ancho de panel",
+        ["Estrecho", "Amplio"],
+        index=0 if st.session_state.help_width == "Estrecho" else 1,
+        help="Ajusta el ancho de esta barra lateral."
+    )
     if ancho_opt != st.session_state.help_width:
         st.session_state.help_width = ancho_opt
 
-    # CSS para ensanchar la sidebar cuando corresponda
+    # CSS para ensanchar la sidebar (selector tolerante a cambios de DOM)
     st.markdown(
         f"""
         <style>
-          section[data-testid="stSidebar"] {{
+          section[data-testid="stSidebar"], aside[aria-label="sidebar"] {{
             width: {SIDEBAR_WIDTHS[st.session_state.help_width]}px !important;
           }}
         </style>
@@ -69,20 +80,20 @@ with st.sidebar:
 # Utilidades de selects estandarizados
 # ──────────────────────────────────────────────────────────────
 def op_0_4():
-    return [
-        "0 — sin síntomas", "1 — leve", "2 — moderado",
-        "3 — severo", "4 — potencialmente mortal"
-    ]
-def to_0_4(v: str) -> int: return int(v.split("—")[0].strip())
+    return ["0 — sin síntomas", "1 — leve", "2 — moderado", "3 — severo", "4 — potencialmente mortal"]
+def to_0_4(v: str) -> int:
+    return int(v.split("—")[0].strip())
 
 def op_0_3(lbl3="3 — severo"):
     return ["0 — sin síntomas", "1 — leve (A)", "2 — moderado (B/C)", lbl3]
-def to_0_3(v: str) -> int: return int(v.split("—")[0].strip())
+def to_0_3(v: str) -> int:
+    return int(v.split("—")[0].strip())
 
 def op_A_E(include_zero=True):
-    base = ["A — leve","B — moderado","C — severo","D — muy severo","E — compromiso vital"]
+    base = ["A — leve", "B — moderado", "C — severo", "D — muy severo", "E — compromiso vital"]
     return (["0 — sin síntomas"] + base) if include_zero else base
-def to_A_E(v: str) -> str: return v.split("—")[0].strip()
+def to_A_E(v: str) -> str:
+    return v.split("—")[0].strip()
 
 # ──────────────────────────────────────────────────────────────
 # Motor de reglas (DOCX)
@@ -188,24 +199,33 @@ def evaluar(data: Dict) -> Dict:
     return {"recomendacion": rec, "mensajes": msgs, "detalles": det}
 
 # ──────────────────────────────────────────────────────────────
-# Helpers de navegación
+# Helpers de navegación (con re-run seguro)
 # ──────────────────────────────────────────────────────────────
+def safe_rerun():
+    try:
+        st.rerun()
+    except Exception:
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
 def next_button(valid: bool):
-    left, _ = st.columns([1,3])
+    left, _ = st.columns([1, 3])
     if left.button("Siguiente", type="primary", use_container_width=True):
         if valid:
             st.session_state.step += 1
-            st.rerun()
+            safe_rerun()
         else:
             st.warning("Completa los campos requeridos antes de continuar.")
 
 def finish_button(valid: bool, data: Dict):
-    left, _ = st.columns([1,3])
+    left, _ = st.columns([1, 3])
     if left.button("Finalizar y calcular", type="primary", use_container_width=True):
         if valid:
             st.session_state.result = evaluar(data)
             st.session_state.step += 1
-            st.rerun()
+            safe_rerun()
         else:
             st.warning("Completa los campos requeridos antes de finalizar.")
 
@@ -213,23 +233,35 @@ def finish_button(valid: bool, data: Dict):
 # FORMULARIO (wizard vertical)
 # ──────────────────────────────────────────────────────────────
 st.header("🩺 Triage clínico — Formulario")
-st.progress((st.session_state.step-1)/7)
+
+# Progreso compatible con distintas versiones (0–100 vs 0–1)
+TOTAL_STEPS = 8  # pasos del formulario antes del resultado
+frac = max(0.0, min(1.0, (st.session_state.step - 1) / TOTAL_STEPS))
+try:
+    st.progress(int(round(frac * 100)))
+except Exception:
+    st.progress(frac)
 
 # Paso 1 — Identificación y fecha (bug fix “Elegir otra”)
 if st.session_state.step == 1:
     st.subheader("1) Identificación y contexto")
     c1, c2 = st.columns(2)
-    st.session_state.dni = c1.text_input("DNI", value=st.session_state.get("dni",""))
+    st.session_state.dni = c1.text_input("DNI", value=st.session_state.get("dni", ""))
     # modo de fecha con estado persistente
     st.session_state.fecha_modo = c2.radio(
-        "Fecha de evaluación", ["Hoy", "Elegir otra"],
-        horizontal=True, index=0 if st.session_state.get("fecha_modo","Hoy")=="Hoy" else 1, key="fecha_modo_radio"
+        "Fecha de evaluación",
+        ["Hoy", "Elegir otra"],
+        horizontal=True,
+        index=0 if st.session_state.fecha_modo == "Hoy" else 1,
+        key="fecha_modo_radio"
     )
     if st.session_state.fecha_modo == "Elegir otra":
         # aparece SIEMPRE el selector cuando se elige esta opción
-        st.session_state.fecha = st.date_input("Selecciona fecha",
-                                               value=st.session_state.get("fecha", date.today()),
-                                               key="fecha_selector")
+        st.session_state.fecha = st.date_input(
+            "Selecciona fecha",
+            value=st.session_state.get("fecha", date.today()),
+            key="fecha_selector"
+        )
     else:
         st.session_state.fecha = date.today()
         st.caption(f"Usando fecha de hoy: **{st.session_state.fecha.isoformat()}**")
@@ -240,25 +272,32 @@ if st.session_state.step == 1:
 # Paso 2 — Momento y RT
 if st.session_state.step == 2:
     st.subheader("2) Momento y radioterapia")
-    st.session_state.momento = st.radio("Momento del tratamiento",
-                                        ["< 7 días", "> 7 días", "Semana de descanso"],
-                                        horizontal=True)
-    st.session_state.rt = st.radio("¿Recibió radioterapia?", ["No","Sí"], horizontal=True) == "Sí"
+    st.session_state.momento = st.radio(
+        "Momento del tratamiento",
+        ["< 7 días", "> 7 días", "Semana de descanso"],
+        horizontal=True
+    )
+    st.session_state.rt = st.radio("¿Recibió radioterapia?", ["No", "Sí"], horizontal=True) == "Sí"
     st.session_state.rt_en_curso = False
     st.session_state.rt_semana = None
     st.session_state.rt_fin = None
     if st.session_state.rt:
-        st.session_state.rt_en_curso = st.radio("¿Radioterapia en curso?",
-                                                ["Sí","No"], horizontal=True, index=1) == "Sí"
+        st.session_state.rt_en_curso = st.radio(
+            "¿Radioterapia en curso?", ["Sí", "No"], horizontal=True, index=1
+        ) == "Sí"
         if st.session_state.rt_en_curso:
-            st.session_state.rt_semana = st.selectbox("Semana de tratamiento (si está en curso)",
-                                                       ["< 7 días", "> 7 días", "> 14 días"])
+            st.session_state.rt_semana = st.selectbox(
+                "Semana de tratamiento (si está en curso)", ["< 7 días", "> 7 días", "> 14 días"]
+            )
         else:
-            st.session_state.rt_fin = st.selectbox("Tiempo desde fin de radioterapia",
-                                                   ["< 7 días", "> 7 días"])
+            st.session_state.rt_fin = st.selectbox(
+                "Tiempo desde fin de radioterapia", ["< 7 días", "> 7 días"]
+            )
     valid = True
-    if st.session_state.rt and st.session_state.rt_en_curso and not st.session_state.rt_semana: valid = False
-    if st.session_state.rt and (not st.session_state.rt_en_curso) and not st.session_state.rt_fin: valid = False
+    if st.session_state.rt and st.session_state.rt_en_curso and not st.session_state.rt_semana:
+        valid = False
+    if st.session_state.rt and (not st.session_state.rt_en_curso) and not st.session_state.rt_fin:
+        valid = False
     next_button(valid)
 
 # Paso 3 — ECOG & Paliativos (selects)
@@ -266,7 +305,7 @@ if st.session_state.step == 3:
     st.subheader("3) ECOG & Paliativos")
     c1, c2 = st.columns(2)
     st.session_state.ecog = to_0_4(c1.selectbox("ECOG (0–4)", op_0_4(), index=0))
-    st.session_state.paliativos = c2.radio("¿En cuidados paliativos?", ["N/A","Sí","No"], horizontal=True)
+    st.session_state.paliativos = c2.radio("¿En cuidados paliativos?", ["N/A", "Sí", "No"], horizontal=True)
     next_button(True)
 
 # Paso 4 — Gastrointestinales
@@ -278,25 +317,25 @@ if st.session_state.step == 4:
     vom_g = "0"; dolor_abd = "No"
     if st.session_state.gi_on:
         g1, g2 = st.columns(2)
-        diarrea = g1.radio("¿Diarrea?", ["No","Sí"], horizontal=True) == "Sí"
+        diarrea = g1.radio("¿Diarrea?", ["No", "Sí"], horizontal=True) == "Sí"
         if diarrea:
             diarrea_g = to_0_4(g2.selectbox("Grado de diarrea (0–4)", op_0_4(), index=0))
             gg1, gg2 = st.columns(2)
-            lop = gg1.radio("¿Usó loperamida?", ["No","Sí"], horizontal=True) == "Sí"
+            lop = gg1.radio("¿Usó loperamida?", ["No", "Sí"], horizontal=True) == "Sí"
             if lop:
-                lop_mas7 = gg2.radio(">7 comprimidos en 24 h", ["No","Sí"], horizontal=True) == "Sí"
+                lop_mas7 = gg2.radio(">7 comprimidos en 24 h", ["No", "Sí"], horizontal=True) == "Sí"
 
         st.markdown("---")
         h1, h2 = st.columns(2)
-        nauseas = h1.radio("¿Náuseas?", ["No","Sí"], horizontal=True) == "Sí"
+        nauseas = h1.radio("¿Náuseas?", ["No", "Sí"], horizontal=True) == "Sí"
         if nauseas:
             nauseas_g = to_0_3(h2.selectbox("Grado de náuseas (0–3)", op_0_3("3 — severo"), index=0))
-            nauseas_ant = st.radio("¿Usa antiemético?", ["No","Sí"], horizontal=True) == "Sí"
+            nauseas_ant = st.radio("¿Usa antiemético?", ["No", "Sí"], horizontal=True) == "Sí"
 
         st.markdown("---")
         k1, k2 = st.columns(2)
         vom_g = to_A_E(k1.selectbox("Vómitos (A–E; 0 = sin síntomas)", op_A_E(True), index=0))
-        dolor_abd = k2.selectbox("Dolor abdominal", ["No","A","B","C","D"], index=0)
+        dolor_abd = k2.selectbox("Dolor abdominal", ["No", "A", "B", "C", "D"], index=0)
 
     st.session_state.diarrea = diarrea
     st.session_state.diarrea_g = diarrea_g
@@ -319,22 +358,22 @@ if st.session_state.step == 5:
     smp = False; smp_g = 0
     if st.session_state.derm_on:
         d1, d2 = st.columns(2)
-        mucositis = d1.radio("¿Mucositis?", ["No","Sí"], horizontal=True) == "Sí"
+        mucositis = d1.radio("¿Mucositis?", ["No", "Sí"], horizontal=True) == "Sí"
         if mucositis:
             mucositis_g = to_0_3(d2.selectbox("Grado mucositis (0–3; D=3)", op_0_3("3 — severo (D)"), index=0))
         st.markdown("---")
         d3, d4 = st.columns(2)
-        eritema = d3.radio("¿Eritema/descamación?", ["No","Sí"], horizontal=True) == "Sí"
+        eritema = d3.radio("¿Eritema/descamación?", ["No", "Sí"], horizontal=True) == "Sí"
         if eritema:
             eritema_g = to_A_E(d4.selectbox("Grado eritema/descamación (A–E)", op_A_E(False), index=0))
         st.markdown("---")
         d5, d6 = st.columns(2)
-        acne = d5.radio("¿Acné?", ["No","Sí"], horizontal=True) == "Sí"
+        acne = d5.radio("¿Acné?", ["No", "Sí"], horizontal=True) == "Sí"
         if acne:
             acne_g = to_0_3(d6.selectbox("Grado acné (0–3)", op_0_3("3 — severo"), index=0))
         st.markdown("---")
         d7, d8 = st.columns(2)
-        smp = d7.radio("¿Síndrome mano-pie?", ["No","Sí"], horizontal=True) == "Sí"
+        smp = d7.radio("¿Síndrome mano-pie?", ["No", "Sí"], horizontal=True) == "Sí"
         if smp:
             smp_g = to_0_3(d8.selectbox("Grado SMP (0–3)", op_0_3("3 — severo"), index=0))
     st.session_state.mucositis = mucositis
@@ -354,10 +393,10 @@ if st.session_state.step == 6:
     neuropatia = False; neuropatia_g = 0; ototox = False
     if st.session_state.neuro_on:
         n1, n2 = st.columns(2)
-        neuropatia = n1.radio("¿Neuropatía?", ["No","Sí"], horizontal=True) == "Sí"
+        neuropatia = n1.radio("¿Neuropatía?", ["No", "Sí"], horizontal=True) == "Sí"
         if neuropatia:
             neuropatia_g = to_0_3(n2.selectbox("Grado neuropatía (0–3)", op_0_3("3 — severo"), index=0))
-        ototox = st.radio("¿Ototoxicidad (hipoacusia/tinnitus)?", ["No","Sí"], horizontal=True) == "Sí"
+        ototox = st.radio("¿Ototoxicidad (hipoacusia/tinnitus)?", ["No", "Sí"], horizontal=True) == "Sí"
     st.session_state.neuropatia = neuropatia
     st.session_state.neuropatia_g = neuropatia_g
     st.session_state.ototox = ototox
@@ -371,7 +410,7 @@ if st.session_state.step == 7:
     if st.session_state.cv_on:
         c1, c2 = st.columns(2)
         sang_g = to_A_E(c1.selectbox("Sangrado (A–E; 0 = sin síntomas)", op_A_E(True), index=0))
-        hta = c2.radio("¿Hipertensión?", ["No","Sí"], horizontal=True) == "Sí"
+        hta = c2.radio("¿Hipertensión?", ["No", "Sí"], horizontal=True) == "Sí"
         if hta:
             hta_g = to_0_4(st.selectbox("Grado HTA (0–4)", op_0_4(), index=0))
     st.session_state.sang_g = sang_g
@@ -430,7 +469,7 @@ if st.session_state.step == 9 and st.session_state.result:
     for k, v in res["detalles"].items():
         st.markdown(f"- **{k}:** {v}")
 
-    # Descarga JSON
+    # Descarga JSON (usa bytes, no file-like)
     payload = {
         "datos": {"dni": st.session_state.dni, "fecha": st.session_state.fecha.isoformat(),
                   "momento": st.session_state.momento},
@@ -438,8 +477,11 @@ if st.session_state.step == 9 and st.session_state.result:
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
     json_bytes = io.BytesIO(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
-    st.download_button("⬇️ Descargar informe (JSON)", data=json_bytes,
-                       file_name=f"triage_{st.session_state.dni or 'ND'}.json",
-                       mime="application/json")
+    st.download_button(
+        "⬇️ Descargar informe (JSON)",
+        data=json_bytes.getvalue(),  # <- robusto entre versiones
+        file_name=f"triage_{st.session_state.dni or 'ND'}.json",
+        mime="application/json"
+    )
 
-    st.button("🔄 Reiniciar", on_click=lambda: (st.session_state.clear(), st.rerun()))
+    st.button("🔄 Reiniciar", on_click=lambda: (st.session_state.clear(), safe_rerun()))
